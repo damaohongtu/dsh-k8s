@@ -1,0 +1,7 @@
+# dsh-system 命名空间：网关 + 每用户 dsh Pod / PVC 都在这里
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dsh-system
+  labels:
+    app.kubernetes.io/part-of: dsh

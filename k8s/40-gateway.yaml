@@ -1,0 +1,129 @@
+# dsh gateway（每用户 dsh 沙盒编排）
+#
+# 关键约束：
+# - replicas 必须 = 1：sandbox_registry.db 是 PVC 上的 SQLite，多副本会脑裂；
+#   strategy 用 Recreate 保证滚动更新时不出现双副本同时写库
+# - 网关不含业务逻辑：dsh web UI / API 全部由用户自己的 dsh Pod 原生提供
+#   （dsh --profile web），网关只做 CAS 认证、Pod/PVC 编排、认证代换
+#   （dsh 启动 token → 会话 cookie）、反向代理
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dsh-gateway
+  namespace: dsh-system
+  labels:
+    app.kubernetes.io/name: dsh-gateway
+    app.kubernetes.io/part-of: dsh
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dsh-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dsh-gateway
+        app.kubernetes.io/part-of: dsh
+    spec:
+      serviceAccountName: dsh-gateway
+      containers:
+        - name: dsh-gateway
+          image: damaohongtu/dsh-gateway:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - secretRef:
+                name: dsh-secrets
+          env:
+            # ---------- 沙盒编排（K8s）---------- #
+            - name: DSHGW_SANDBOX_MODE
+              value: k8s
+            - name: DSHGW_K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # 每用户 dsh 镜像（自建 image/，打包官方 npm 包 @deepseek-ai/dsh；
+            # kind 验证时 `kind load docker-image` 导入后 IfNotPresent 直接使用）
+            - name: DSHGW_USER_IMAGE
+              value: damaohongtu/dsh:0.2.1-rc.2
+            - name: DSHGW_K8S_USER_STORAGE
+              value: 5Gi
+            - name: DSHGW_K8S_POD_READY_TIMEOUT
+              value: "180"
+            # DSHGW_K8S_STORAGE_CLASS 留空 = 集群默认 StorageClass
+            # ---------- 用户沙盒资源限额（dsh Pod）---------- #
+            - name: DSHGW_USER_MEM
+              value: 2Gi
+            - name: DSHGW_USER_CPUS
+              value: "1.0"
+            - name: DSHGW_USER_TMPFS_SIZE
+              value: 1Gi
+            - name: DSHGW_SANDBOX_IDLE_TTL
+              value: "900"
+            - name: DSHGW_SANDBOX_HEALTH_TTL
+              value: "15"
+            # ---------- CAS / 前端 ---------- #
+            # CAS_SERVER_URL 必须同时被浏览器与 gateway Pod 解析到同一地址：
+            # 浏览器经宿主 /etc/hosts（127.0.0.1 cas.dsh-system.svc.cluster.local）
+            # + NodePort 31447；Pod 内走集群 DNS + Service 31447 端口。
+            - name: DSHGW_CAS_SERVER_URL
+              value: http://cas.dsh-system.svc.cluster.local:31447/cas/
+            # 注意：宿主端口必须避开浏览器封禁端口（如 10080/amanda 会 ERR_UNSAFE_PORT）
+            # 与已被占用的端口（19081 openclaw、19091 opencode）；kind 映射 19092→30080。
+            - name: DSHGW_CAS_SERVICE_URL
+              value: http://localhost:19092/dshgw/auth/callback
+            - name: DSHGW_FRONTEND_URL
+              value: http://localhost:19092/
+            - name: DSHGW_AUTH_DISABLED
+              value: "False"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            # 网关持久化：sandbox_registry.db
+            - name: gateway-data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /dshgw/healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            httpGet:
+              path: /dshgw/healthz
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 5
+      volumes:
+        - name: gateway-data
+          persistentVolumeClaim:
+            claimName: dsh-gateway-data
+---
+# 对外入口：NodePort 30080（浏览器 http://<node>:30080/ → 用户 dsh web UI）
+apiVersion: v1
+kind: Service
+metadata:
+  name: dsh-gateway
+  namespace: dsh-system
+  labels:
+    app.kubernetes.io/name: dsh-gateway
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: dsh-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      nodePort: 30080

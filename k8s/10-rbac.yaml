@@ -1,0 +1,42 @@
+# 网关的 K8s 编排权限（namespace 级最小授权）
+#
+# 网关通过 in-cluster ServiceAccount 调 K8s API：
+# - pods：动态创建/查询/删除每用户 dsh Pod
+# - pods/log：读取 dsh 启动日志中的 token 行（网关代浏览器换会话 cookie 的原料，
+#   这是 dsh 认证代换链的必要权限，opencode 系无需此项）
+# - persistentvolumeclaims：动态创建每用户数据 PVC（只创建与读取，永不删除）
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dsh-gateway
+  namespace: dsh-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dsh-gateway
+  namespace: dsh-system
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dsh-gateway
+  namespace: dsh-system
+subjects:
+  - kind: ServiceAccount
+    name: dsh-gateway
+    namespace: dsh-system
+roleRef:
+  kind: Role
+  name: dsh-gateway
+  apiGroup: rbac.authorization.k8s.io

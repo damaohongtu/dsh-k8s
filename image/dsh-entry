@@ -1,0 +1,34 @@
+#!/bin/sh
+# dsh 容器入口:绑定容器 IP 启动 web UI
+#
+# - dsh web 拒绝绑定通配地址(0.0.0.0 启动即报错),必须绑定容器自身 IP;
+#   网关按 Pod IP 直连寻址,探针也打 PodIP:3080
+# - dsh 会话 cookie 绑定 token 交换时的 authority(即 PodIP:3080),
+#   网关代理保持同一 Host,链路自洽,无需 --public-url / --trusted-host
+# - 目录骨架以 node 用户创建:PVC 首挂为空,runc 会把缺失的 WORKDIR
+#   建成 root 属主,所以镜像 WORKDIR=/data,由本脚本建 workspace
+set -eu
+
+# 传入了命令则直接执行(docker run … dsh --version 之类的调试场景)
+if [ "$#" -gt 0 ]; then
+  exec "$@"
+fi
+
+POD_IP="$(hostname -i | awk '{print $1}')"
+DSH_PORT="${DSH_PORT:-3080}"
+
+mkdir -p "${DSH_HOME:-/data/.dsh}" "${DSH_WORKSPACE:-/data/workspace}"
+cd "${DSH_WORKSPACE:-/data/workspace}"
+
+# 平台身份插件:源在 /opt(不触碰 dsh 安装树);dsh 的 loader 从 profile
+# 目录链解析插件包名,须落到 DSH_HOME/node_modules(PVC 上,pnpm 工作区
+# 之外,不会被 dsh plugin add 触碰);DSH_K8S_* 环境由网关注入
+PLUGIN_SRC="/opt/dsh-k8s-user-info"
+PLUGIN_DST="${DSH_HOME:-/data/.dsh}/node_modules/dsh-k8s-user-info"
+mkdir -p "${DSH_HOME:-/data/.dsh}/node_modules"
+rm -rf "${PLUGIN_DST}"
+cp -r "${PLUGIN_SRC}" "${PLUGIN_DST}"
+
+# --patch 是 launcher 级选项,必须放在 app 参数(--no-open/--host/--port)之前
+exec dsh --profile web --patch "${PLUGIN_DST}/patch.yml" \
+  --no-open --host "${POD_IP}" --port "${DSH_PORT}"

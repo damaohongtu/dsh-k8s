@@ -1,0 +1,26 @@
+# kind 集群配置：本地验证 dsh-k8s 多用户部署
+#
+# 前置：Docker Desktop、kubectl、kind
+# 用法：kind create cluster --config k8s/kind-dsh.yaml
+#
+# 端口映射（宿主 → kind 节点）：
+#   19092 → 30080   dsh 网关（http://localhost:19092/）
+#                    不能用 10080：它在浏览器封禁端口名单（amanda），
+#                    Chrome/Safari 访问会报 ERR_UNSAFE_PORT
+#                    不能用 19081/19091：已被 openclaw / opencode 集群占用
+#   31447 → 31447   CAS NodePort（浏览器与 Pod 同 URL，见 50-cas.yaml；
+#                    31444/31445/31446 被 openclaw / opencode / pi 占用）
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: dsh
+nodes:
+  - role: control-plane
+    # 固定节点镜像：与本地缓存一致，避免创建集群时再走一次慢速 Docker Hub 拉取
+    image: kindest/node:v1.29.10
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 19092
+        protocol: TCP
+      - containerPort: 31447
+        hostPort: 31447
+        protocol: TCP

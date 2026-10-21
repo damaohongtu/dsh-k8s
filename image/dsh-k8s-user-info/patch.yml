@@ -1,0 +1,14 @@
+# dsh-k8s-user-info 插件的启用层(由镜像内 dsh-entry 以 --patch 挂载,
+# 叠加在 profile 自身的 cordis.patch.yml 之后)。
+#
+# 平台身份来自 Pod 环境变量(网关在创建用户 Pod 时注入):
+#   DSH_K8S_USER_ID    CAS 账号(principal,如 test1)
+#   DSH_K8S_USERNAME   CAS 展示名(cn/displayName,缺省回落 principal)
+# 环境缺失时两项求值为空字符串,插件 Config 校验通过但 apply 不注册
+# 任何内容(非 k8s 网关部署下原生行为不受影响)。
+- insert:
+    - id: k8s-user-info
+      name: dsh-k8s-user-info
+      config:
+        userId: !!js "process.env.DSH_K8S_USER_ID || ''"
+        username: !!js "process.env.DSH_K8S_USERNAME || ''"

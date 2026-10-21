@@ -1,0 +1,17 @@
+# 真实凭据(genen-secret.sh 生成)
+k8s/30-secret.yaml
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 数据库
+*.db
+
+# 系统/IDE
+.DS_Store
+.idea/
+
+# 本地工具配置
+.claude/
